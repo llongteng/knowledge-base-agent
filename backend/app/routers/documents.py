@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
@@ -25,9 +27,31 @@ async def upload_document(
     if not kb:
         raise HTTPException(status_code=404, detail="未找到该知识库")
 
+    content = await request.body()
+    content_hash = hashlib.sha256(content).hexdigest()
+    duplicate = (
+        db.query(models.Document)
+        .filter(
+            models.Document.knowledge_base_id == knowledge_base_id,
+            models.Document.content_hash == content_hash,
+        )
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "该文件内容已经上传过，不会重复入库",
+                "document_id": duplicate.id,
+                "filename": duplicate.filename,
+                "status": duplicate.status,
+            },
+        )
+
     document = models.Document(
         knowledge_base_id=knowledge_base_id,
         filename=filename,
+        content_hash=content_hash,
         status="processing",
     )
     db.add(document)
@@ -35,7 +59,6 @@ async def upload_document(
     db.refresh(document)
 
     try:
-        content = await request.body()
         segments = parse_bytes(document.filename, content, request.headers.get("content-type"))
         chunks = chunk_segments(segments)
         if not chunks:
@@ -82,6 +105,25 @@ def get_document(knowledge_base_id: int, document_id: int, db: Session = Depends
     if not document or document.knowledge_base_id != knowledge_base_id:
         raise HTTPException(status_code=404, detail="未找到该文档")
     return document
+
+
+@router.get("/{document_id}/chunks", response_model=list[schemas.DocumentChunkPreviewOut])
+def preview_document_chunks(
+    knowledge_base_id: int,
+    document_id: int,
+    limit: int = Query(5, ge=1, le=20),
+    db: Session = Depends(get_db),
+):
+    document = db.get(models.Document, document_id)
+    if not document or document.knowledge_base_id != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="未找到该文档")
+    return (
+        db.query(models.DocumentChunk)
+        .filter(models.DocumentChunk.document_id == document_id)
+        .order_by(models.DocumentChunk.chunk_index.asc())
+        .limit(limit)
+        .all()
+    )
 
 
 @router.delete("/{document_id}")

@@ -29,6 +29,7 @@ class Document(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id"), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     source_type: Mapped[str] = mapped_column(String(40), default="upload")
     status: Mapped[str] = mapped_column(String(40), default="processing")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -94,6 +95,7 @@ class Citation(Base):
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(160), nullable=True)
     score: Mapped[float] = mapped_column(Float, default=0.0)
 
     message = relationship("Message", back_populates="citations")

@@ -14,15 +14,50 @@ router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-bases"])
 
 def _with_counts(kb: models.KnowledgeBase) -> schemas.KnowledgeBaseOut:
     documents = kb.documents or []
+    conversations = kb.conversations or []
+    ready_count = len([doc for doc in documents if doc.status == "ready"])
+    failed_count = len([doc for doc in documents if doc.status == "failed"])
+    recent_document = max(documents, key=lambda doc: doc.created_at).filename if documents else None
+    recent_question = max(conversations, key=lambda item: item.updated_at).title if conversations else None
     return schemas.KnowledgeBaseOut(
         id=kb.id,
         name=kb.name,
         description=kb.description,
         document_count=len(documents),
-        ready_document_count=len([doc for doc in documents if doc.status == "ready"]),
+        ready_document_count=ready_count,
+        failed_document_count=failed_count,
+        knowledge_type=_infer_knowledge_type(kb.name, kb.description, documents),
+        health_status=_infer_health_status(len(documents), ready_count, failed_count),
+        recent_document=recent_document,
+        recent_question=recent_question,
         created_at=kb.created_at,
         updated_at=kb.updated_at,
     )
+
+
+def _infer_knowledge_type(name: str, description: str, documents: list[models.Document]) -> str:
+    text = " ".join([name, description, *[document.filename for document in documents]]).lower()
+    if "简历" in text or "resume" in text:
+        return "简历知识库"
+    if "退款" in text or "售后" in text or "政策" in text or "policy" in text:
+        return "政策知识库"
+    if "faq" in text or "问答" in text:
+        return "FAQ 知识库"
+    if "手册" in text or "manual" in text or "产品" in text:
+        return "产品手册库"
+    if "制度" in text or "治理" in text or "安全" in text:
+        return "制度知识库"
+    return "通用知识库"
+
+
+def _infer_health_status(document_count: int, ready_count: int, failed_count: int) -> str:
+    if document_count == 0:
+        return "暂无文档"
+    if ready_count == 0 and failed_count > 0:
+        return "全部解析失败"
+    if failed_count > 0:
+        return "部分文档失败"
+    return "可问答"
 
 
 @router.post("", response_model=schemas.KnowledgeBaseOut)

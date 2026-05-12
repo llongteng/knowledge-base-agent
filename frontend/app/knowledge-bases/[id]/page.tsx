@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { api, streamChat } from "@/lib/api";
-import type { ChatMessage, Citation, DocumentRecord, KnowledgeBase, TraceStep } from "@/lib/types";
+import type { ChatMessage, Citation, DocumentChunkPreview, DocumentRecord, KnowledgeBase, TraceStep } from "@/lib/types";
 
 const initialTrace: TraceStep[] = [
   { label: "识别问题类型", state: "idle" },
@@ -34,10 +34,13 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
   const [trace, setTrace] = useState<TraceStep[]>(initialTrace);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [activeCitation, setActiveCitation] = useState<string | null>(null);
+  const [expandedDocumentId, setExpandedDocumentId] = useState<number | null>(null);
+  const [chunkPreviews, setChunkPreviews] = useState<Record<number, DocumentChunkPreview[]>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const readyCount = useMemo(() => documents.filter((document) => document.status === "ready").length, [documents]);
+  const suggestedQuestions = useMemo(() => buildSuggestedQuestions(documents), [documents]);
 
   async function load() {
     const [nextKb, nextDocuments] = await Promise.all([
@@ -55,15 +58,40 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
   async function upload(fileList: FileList | null) {
     if (!fileList?.length) return;
     setError("");
+    const failures: string[] = [];
     for (const file of Array.from(fileList).slice(0, 5)) {
-      await api.uploadDocument(knowledgeBaseId, file);
+      try {
+        await api.uploadDocument(knowledgeBaseId, file);
+      } catch (err) {
+        failures.push(`${file.name}：${err instanceof Error ? err.message : "上传失败"}`);
+      }
     }
     await load();
+    if (failures.length) {
+      setError(failures.join("\n"));
+    }
   }
 
   async function removeDocument(documentId: number) {
     await api.deleteDocument(knowledgeBaseId, documentId);
+    setChunkPreviews((current) => {
+      const copy = { ...current };
+      delete copy[documentId];
+      return copy;
+    });
     await load();
+  }
+
+  async function togglePreview(documentId: number) {
+    if (expandedDocumentId === documentId) {
+      setExpandedDocumentId(null);
+      return;
+    }
+    setExpandedDocumentId(documentId);
+    if (!chunkPreviews[documentId]) {
+      const preview = await api.previewDocumentChunks(knowledgeBaseId, documentId);
+      setChunkPreviews((current) => ({ ...current, [documentId]: preview }));
+    }
   }
 
   async function ask() {
@@ -173,8 +201,13 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
           <h2>文档入库</h2>
           <label className="upload-zone">
             <strong>上传材料</strong>
-            <span className="tag">PDF / TXT / Markdown / CSV，单文件 10MB</span>
-            <input multiple onChange={(event) => upload(event.target.files)} type="file" />
+            <span className="tag">PDF / Word / TXT / Markdown / CSV，单文件 10MB</span>
+            <input
+              accept=".pdf,.docx,.txt,.md,.markdown,.csv"
+              multiple
+              onChange={(event) => upload(event.target.files)}
+              type="file"
+            />
           </label>
           <div className="document-list">
             {documents.length === 0 ? (
@@ -185,10 +218,41 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
                   <div className="status-row">
                     <span className={`tag ${document.status}`}>{documentStatusText[document.status]}</span>
                     <span className="tag">{document.chunk_count} 个片段</span>
+                    {document.chunk_count > 80 ? <span className="tag failed">解析较碎</span> : null}
                   </div>
                   <p className="document-name">{document.filename}</p>
                   {document.error_message ? <p>{document.error_message}</p> : null}
-                  <button className="ghost-button" type="button" onClick={() => removeDocument(document.id)}>删除</button>
+                  {document.status === "failed" ? (
+                    <p className="document-hint">可重新选择修正后的文件上传；系统会阻止重复内容再次入库。</p>
+                  ) : null}
+                  <div className="actions">
+                    <button
+                      className="ghost-button"
+                      disabled={document.chunk_count === 0}
+                      type="button"
+                      onClick={() => togglePreview(document.id)}
+                    >
+                      {expandedDocumentId === document.id ? "收起片段" : "预览片段"}
+                    </button>
+                    <button className="ghost-button" type="button" onClick={() => removeDocument(document.id)}>删除</button>
+                  </div>
+                  {expandedDocumentId === document.id ? (
+                    <div className="chunk-preview-list">
+                      {(chunkPreviews[document.id] ?? []).length === 0 ? (
+                        <p className="document-hint">暂无可预览片段。</p>
+                      ) : (
+                        chunkPreviews[document.id].map((chunk) => (
+                          <article className="chunk-preview" key={chunk.id}>
+                            <span>
+                              {chunk.title_path || `片段 ${chunk.chunk_index + 1}`}
+                              {chunk.page_number ? ` · 第 ${chunk.page_number} 页` : ""}
+                            </span>
+                            <p>{chunk.content}</p>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
                 </article>
               ))
             )}
@@ -202,7 +266,9 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
           </div>
           <div className="message-list">
             {messages.length === 0 ? (
-              <div className="empty">上传文档后，试试“退款超过 7 天还能处理吗？”或“企业版售后政策是什么？”</div>
+              <div className="empty">
+                上传文档后，可以从下方推荐问题开始，也可以直接输入需要依据的问题。
+              </div>
             ) : (
               messages.map((message) => (
                 <article className={`message ${message.role}`} key={message.id}>
@@ -225,6 +291,18 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
               <button className="ghost-button" type="button" onClick={() => setQuestion("如果文档里没有相关规定，请告诉我不要编造。")}>
                 拒答测试
               </button>
+            </div>
+            <div className="suggestion-row">
+              {suggestedQuestions.map((suggestion) => (
+                <button
+                  className="ghost-button"
+                  key={suggestion}
+                  onClick={() => setQuestion(suggestion)}
+                  type="button"
+                >
+                  {suggestion}
+                </button>
+              ))}
             </div>
           </div>
         </section>
@@ -252,6 +330,7 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
                     <span className="tag">{citation.document}</span>
                   </div>
                   <p>{citation.title_path || `第 ${citation.paragraph ?? citation.row ?? "-"} 段`}</p>
+                  {citation.reason ? <p className="source-reason">{citation.reason}</p> : null}
                   <p className="snippet">{citation.snippet}</p>
                 </article>
               ))
@@ -261,4 +340,18 @@ export default function KnowledgeBaseDetail({ params }: { params: Promise<{ id: 
       </section>
     </main>
   );
+}
+
+function buildSuggestedQuestions(documents: DocumentRecord[]) {
+  const filenames = documents.map((document) => document.filename.toLowerCase()).join(" ");
+  if (filenames.includes("简历") || filenames.includes("resume")) {
+    return ["这是谁的简历？", "候选人有哪些 AI Agent 相关经历？", "教育背景是什么？"];
+  }
+  if (filenames.includes("退款") || filenames.includes("政策") || filenames.includes("refund")) {
+    return ["退款超过 7 天还能处理吗？", "需要满足什么条件？", "企业版和个人版有什么差异？"];
+  }
+  if (documents.length > 0) {
+    return ["这份文档主要讲什么？", "请总结关键规则", "有哪些需要注意的例外？"];
+  }
+  return ["上传文档后自动推荐问题", "当前知识库有什么内容？", "如果没有依据请不要编造"];
 }

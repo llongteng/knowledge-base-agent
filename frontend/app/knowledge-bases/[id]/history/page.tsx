@@ -11,9 +11,26 @@ export default function HistoryPage({ params }: { params: Promise<{ id: string }
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [error, setError] = useState("");
 
+  async function load() {
+    setItems(await api.listHistory(knowledgeBaseId));
+  }
+
   useEffect(() => {
-    api.listHistory(knowledgeBaseId).then(setItems).catch((err) => setError(err.message));
+    load().catch((err) => setError(err.message));
   }, [knowledgeBaseId]);
+
+  async function removeConversation(conversationId: number) {
+    if (!window.confirm("确定删除这条对话记录吗？")) return;
+    await api.deleteConversation(conversationId);
+    await load();
+  }
+
+  async function clearAll() {
+    if (items.length === 0) return;
+    if (!window.confirm("确定清空当前知识库的全部历史记录吗？文档不会被删除。")) return;
+    await api.clearHistory(knowledgeBaseId);
+    await load();
+  }
 
   return (
     <main className="shell">
@@ -22,7 +39,12 @@ export default function HistoryPage({ params }: { params: Promise<{ id: string }
           <span>对话留痕</span>
           <strong>对话历史</strong>
         </div>
-        <Link className="ghost-button" href={`/knowledge-bases/${knowledgeBaseId}`}>← 返回工作台</Link>
+        <div className="actions">
+          <button className="danger-button" disabled={items.length === 0} onClick={clearAll} type="button">
+            清空历史
+          </button>
+          <Link className="ghost-button" href={`/knowledge-bases/${knowledgeBaseId}`}>← 返回工作台</Link>
+        </div>
       </header>
       {error ? <section className="empty">{error}</section> : null}
       <section className="history-list">
@@ -31,11 +53,22 @@ export default function HistoryPage({ params }: { params: Promise<{ id: string }
         ) : (
           items.map((item) => (
             <article className="history-item" key={item.id}>
-              <p className="eyebrow">对话 #{item.id}</p>
+              <div className="card-kicker">
+                <span>对话 #{item.id}</span>
+                <span>{new Date(item.updated_at).toLocaleString()}</span>
+              </div>
               <h2>{item.title}</h2>
               <div className="meta-row">
+                <span className="tag">{questionTypeText[item.question_type]}</span>
                 <span className="tag">{item.message_count} 条消息</span>
-                <span className="tag">{new Date(item.updated_at).toLocaleString()}</span>
+                <span className="tag">{item.citation_count} 个引用</span>
+                <span className={`tag ${confidenceClass(item.confidence_status)}`}>{item.confidence_status}</span>
+              </div>
+              <div className="actions">
+                <Link className="ghost-button" href={`/knowledge-bases/${knowledgeBaseId}`}>继续提问</Link>
+                <button className="danger-button" onClick={() => removeConversation(item.id)} type="button">
+                  删除
+                </button>
               </div>
             </article>
           ))
@@ -43,4 +76,18 @@ export default function HistoryPage({ params }: { params: Promise<{ id: string }
       </section>
     </main>
   );
+}
+
+const questionTypeText: Record<ConversationSummary["question_type"], string> = {
+  resume_identity: "文档身份",
+  policy: "政策判断",
+  extraction: "信息抽取",
+  summary: "总结归纳",
+  knowledge: "知识问答",
+};
+
+function confidenceClass(status: ConversationSummary["confidence_status"]) {
+  if (status === "有引用依据") return "ready";
+  if (status === "已拒答") return "failed";
+  return "";
 }

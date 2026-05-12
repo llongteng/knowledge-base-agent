@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import os
+import tempfile
+from pathlib import Path
 
-from app.database import init_db
-from app.main import app
+
+def _use_temporary_database() -> tempfile.TemporaryDirectory:
+    temp_dir = tempfile.TemporaryDirectory()
+    db_path = Path(temp_dir.name) / "smoke_test.db"
+    os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    return temp_dir
 
 
 def main() -> None:
+    temp_dir = _use_temporary_database()
+    from fastapi.testclient import TestClient
+
+    from app.database import init_db
+    from app.main import app
+
     init_db()
     client = TestClient(app)
     kb = client.post(
@@ -28,6 +40,7 @@ def main() -> None:
     history = client.get(f"/api/knowledge-bases/{kb['id']}/history")
     assert history.status_code == 200, history.text
     print("烟测通过")
+    temp_dir.cleanup()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-import type { Citation, ConversationSummary, DocumentRecord, KnowledgeBase } from "./types";
+import type { Citation, ConversationSummary, DocumentChunkPreview, DocumentRecord, KnowledgeBase } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
@@ -28,6 +28,8 @@ export const api = {
     request<{ ok: boolean }>(`/api/knowledge-bases/${id}`, { method: "DELETE" }),
   listDocuments: (knowledgeBaseId: number) =>
     request<DocumentRecord[]>(`/api/knowledge-bases/${knowledgeBaseId}/documents`),
+  previewDocumentChunks: (knowledgeBaseId: number, documentId: number) =>
+    request<DocumentChunkPreview[]>(`/api/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/chunks`),
   uploadDocument: async (knowledgeBaseId: number, file: File) => {
     const response = await fetch(
       `${API_BASE}/api/knowledge-bases/${knowledgeBaseId}/documents?filename=${encodeURIComponent(file.name)}`,
@@ -38,7 +40,15 @@ export const api = {
       },
     );
     if (!response.ok) {
-      throw new Error(await response.text());
+      const text = await response.text();
+      let message = text;
+      try {
+        const parsed = JSON.parse(text);
+        message = parsed.detail?.message ?? text;
+      } catch {
+        message = text;
+      }
+      throw new Error(message);
     }
     return response.json() as Promise<DocumentRecord>;
   },
@@ -48,6 +58,12 @@ export const api = {
     }),
   listHistory: (knowledgeBaseId: number) =>
     request<ConversationSummary[]>(`/api/knowledge-bases/${knowledgeBaseId}/history`),
+  deleteConversation: (conversationId: number) =>
+    request<{ ok: boolean }>(`/api/conversations/${conversationId}`, { method: "DELETE" }),
+  clearHistory: (knowledgeBaseId: number) =>
+    request<{ ok: boolean; deleted_count: number }>(`/api/knowledge-bases/${knowledgeBaseId}/history`, {
+      method: "DELETE",
+    }),
 };
 
 export async function streamChat(

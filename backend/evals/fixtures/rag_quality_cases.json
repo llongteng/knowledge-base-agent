@@ -1,0 +1,88 @@
+[
+  {
+    "id": "policy_refund_after_7_days",
+    "knowledge_base": "售后政策库",
+    "documents": [
+      {
+        "filename": "售后政策.md",
+        "content": "# 退款规则\n\n退款超过 7 天需要人工审核。企业版客户可提交工单进入人工复核流程。"
+      }
+    ],
+    "question": "退款超过 7 天还能处理吗？",
+    "expected_answer_terms": ["可以处理", "人工审核"],
+    "expected_citation_terms": ["退款超过 7 天"]
+  },
+  {
+    "id": "resume_identity",
+    "knowledge_base": "简历知识库",
+    "documents": [
+      {
+        "filename": "谭博之-简历.txt",
+        "content": "谭博之 简历\n求职意向：AI Agentic Engineering\n项目经历：智能知识库问答 Agent。"
+      }
+    ],
+    "question": "这是谁的简历？",
+    "expected_answer_terms": ["谭博之"],
+    "expected_citation_terms": ["谭博之"]
+  },
+  {
+    "id": "resume_agent_experience",
+    "knowledge_base": "简历知识库",
+    "documents": [
+      {
+        "filename": "候选人简历.txt",
+        "content": "项目经历：智能知识库问答 Agent，负责检索、引用校验和回答生成链路。\n工作经历：建设企业客服 AI Agent，支持多轮对话与人工转接。"
+      }
+    ],
+    "question": "候选人有哪些 AI Agent 相关经历？",
+    "expected_answer_terms": ["Agent", "检索"],
+    "expected_citation_terms": ["Agent"]
+  },
+  {
+    "id": "unanswerable_external_question",
+    "knowledge_base": "售后政策库",
+    "documents": [
+      {
+        "filename": "售后政策.md",
+        "content": "退款超过 7 天需要人工审核。"
+      }
+    ],
+    "question": "公司 CEO 是谁？",
+    "expected_answer_terms": ["未找到可支撑答案的证据"],
+    "expected_citation_terms": []
+  },
+  {
+    "id": "policy_ranking_ignores_generic_customer_service",
+    "knowledge_base": "售后政策库",
+    "documents": [
+      {
+        "filename": "客服能力.md",
+        "content": "客服团队擅长处理复杂流程、人工转接、情绪识别和多轮对话。"
+      },
+      {
+        "filename": "退款政策.md",
+        "content": "退款超过 7 天需要人工审核。企业版客户可提交售后工单。"
+      }
+    ],
+    "question": "退款超过 7 天还能处理吗？",
+    "expected_answer_terms": ["可以处理", "人工审核"],
+    "expected_citation_terms": ["退款超过 7 天"]
+  },
+  {
+    "id": "filename_title_boost_policy",
+    "knowledge_base": "售后政策库",
+    "documents": [
+      {
+        "filename": "退款政策.md",
+        "content": "# 超期处理\n\n超过 7 天需要人工审核。"
+      },
+      {
+        "filename": "产品介绍.md",
+        "content": "产品支持个人版和企业版，提供知识库问答能力。"
+      }
+    ],
+    "question": "退款超过 7 天还能处理吗？",
+    "expected_answer_terms": ["人工审核"],
+    "expected_citation_terms": ["超过 7 天"]
+  }
+]

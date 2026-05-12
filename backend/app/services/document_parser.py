@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import csv
 import io
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from xml.etree import ElementTree
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown", ".csv"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown", ".csv"}
+SUPPORTED_FORMAT_HINT = "PDF、Word（.docx）、TXT、Markdown 或 CSV"
+WORD_NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 @dataclass
@@ -22,7 +26,7 @@ class ParsedSegment:
 def parse_bytes(filename: str, content: bytes, content_type: str | None = None) -> list[ParsedSegment]:
     extension = Path(filename).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError("暂不支持该文件格式，请上传 PDF、TXT、Markdown 或 CSV")
+        raise ValueError(f"暂不支持该文件格式，请上传 {SUPPORTED_FORMAT_HINT}")
 
     if len(content) > 10 * 1024 * 1024:
         raise ValueError("文件超过 10MB，请拆分后上传")
@@ -33,6 +37,8 @@ def parse_bytes(filename: str, content: bytes, content_type: str | None = None) 
         return _parse_markdown(_decode_text(content))
     if extension == ".pdf":
         return _parse_pdf(content)
+    if extension == ".docx":
+        return _parse_docx(content)
     return _parse_plain_text(_decode_text(content))
 
 
@@ -105,10 +111,19 @@ def _parse_csv(content: bytes) -> list[ParsedSegment]:
 
 
 def _parse_pdf(content: bytes) -> list[ParsedSegment]:
+    segments = _parse_pdf_with_pdfplumber(content)
+    if not segments:
+        segments = _parse_pdf_with_pypdf(content)
+    if not segments:
+        raise ValueError("暂不支持扫描版 PDF，请上传可复制文本的 PDF")
+    return segments
+
+
+def _parse_pdf_with_pdfplumber(content: bytes) -> list[ParsedSegment]:
     try:
         import pdfplumber  # type: ignore
-    except ImportError as exc:
-        raise ValueError("当前环境缺少 pdfplumber，请安装后解析 PDF") from exc
+    except ImportError:
+        return []
 
     segments: list[ParsedSegment] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -125,6 +140,85 @@ def _parse_pdf(content: bytes) -> list[ParsedSegment]:
                         paragraph_index=paragraph_index,
                     )
                 )
-    if not segments:
-        raise ValueError("暂不支持扫描版 PDF，请上传可复制文本的 PDF")
     return segments
+
+
+def _parse_pdf_with_pypdf(content: bytes) -> list[ParsedSegment]:
+    reader_class = None
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader_class = PdfReader
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader  # type: ignore
+
+            reader_class = PdfReader
+        except ImportError:
+            return []
+
+    segments: list[ParsedSegment] = []
+    reader = reader_class(io.BytesIO(content))
+    for page_index, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        for paragraph_index, paragraph in enumerate(
+            [part.strip() for part in text.splitlines() if part.strip()],
+            start=1,
+        ):
+            segments.append(
+                ParsedSegment(
+                    content=paragraph,
+                    page_number=page_index,
+                    paragraph_index=paragraph_index,
+                )
+            )
+    return segments
+
+
+def _parse_docx(content: bytes) -> list[ParsedSegment]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            document_xml = archive.read("word/document.xml")
+    except (KeyError, zipfile.BadZipFile) as exc:
+        raise ValueError("Word 文档解析失败，请确认文件是有效的 .docx 格式") from exc
+
+    root = ElementTree.fromstring(document_xml)
+    segments: list[ParsedSegment] = []
+    paragraph_index = 1
+
+    for child in root.iter():
+        if child.tag == f"{WORD_NAMESPACE}p" and not _is_inside_table(child, root):
+            text = _text_from_node(child)
+            if text:
+                segments.append(ParsedSegment(content=text, paragraph_index=paragraph_index))
+                paragraph_index += 1
+        if child.tag == f"{WORD_NAMESPACE}tr":
+            cells = [_text_from_node(cell) for cell in child.findall(f"{WORD_NAMESPACE}tc")]
+            cells = [cell for cell in cells if cell]
+            if cells:
+                segments.append(
+                    ParsedSegment(content=" | ".join(cells), paragraph_index=paragraph_index)
+                )
+                paragraph_index += 1
+
+    if not segments:
+        raise ValueError("Word 文档中没有可解析的正文内容")
+    return segments
+
+
+def _is_inside_table(node: ElementTree.Element, root: ElementTree.Element) -> bool:
+    for table in root.iter(f"{WORD_NAMESPACE}tbl"):
+        if node is table:
+            return True
+        if any(descendant is node for descendant in table.iter()):
+            return True
+    return False
+
+
+def _text_from_node(node: ElementTree.Element) -> str:
+    text_parts = [
+        text_node.text or ""
+        for text_node in node.iter(f"{WORD_NAMESPACE}t")
+        if (text_node.text or "").strip()
+    ]
+    return " ".join(part.strip() for part in text_parts if part.strip())

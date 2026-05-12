@@ -19,6 +19,11 @@ class KnowledgeBaseOut(BaseModel):
     description: str
     document_count: int = 0
     ready_document_count: int = 0
+    failed_document_count: int = 0
+    knowledge_type: str = "通用知识库"
+    health_status: str = "暂无文档"
+    recent_document: Optional[str] = None
+    recent_question: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -29,11 +34,22 @@ class DocumentOut(BaseModel):
     id: int
     knowledge_base_id: int
     filename: str
+    content_hash: Optional[str] = None
     source_type: str
     status: str
     error_message: Optional[str]
     chunk_count: int
     created_at: datetime
+
+
+class DocumentChunkPreviewOut(BaseModel):
+    id: int
+    chunk_index: int
+    page_number: Optional[int] = None
+    paragraph_index: Optional[int] = None
+    title_path: Optional[str] = None
+    row_number: Optional[int] = None
+    content: str
 
 
 class ChatRequest(BaseModel):
@@ -52,6 +68,7 @@ class CitationOut(BaseModel):
     title_path: Optional[str] = None
     row: Optional[int] = None
     snippet: str
+    reason: Optional[str] = None
     score: float
 
 

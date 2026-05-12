@@ -4,15 +4,18 @@
 
 ## 解决的问题
 
-企业文档分散、制度查找慢、普通大模型回答缺少依据。这个系统让用户上传 PDF、TXT、Markdown、CSV 文档后，用自然语言提问，并得到带 `[[S1]]` 来源编号的回答。没有可靠依据时，系统会明确拒答。
+企业文档分散、制度查找慢、普通大模型回答缺少依据。这个系统让用户上传 PDF、Word、TXT、Markdown、CSV 文档后，用自然语言提问，并得到带 `[[S1]]` 来源编号的回答。没有可靠依据时，系统会明确拒答。
 
 ## 最小可用版功能
 
 - 知识库创建、列表、删除
 - 文档上传、解析状态、删除
-- TXT、Markdown、CSV 稳定解析，PDF 解析接口已预留并依赖 `pdfplumber`
+- TXT、Markdown、CSV 稳定解析
+- Word `.docx` 解析正文段落和表格行
+- PDF 优先使用 `pdfplumber`，环境缺失时使用 `pypdf/PyPDF2` 兜底解析可复制文本
 - 文档切片、向量化、SQLite 元数据存储
 - SSE 流式问答，返回规划、检索、回答增量、引用和完成事件
+- 可选 OpenAI-compatible 受控生成：只基于后端 Evidence 回答，失败时回退规则答案
 - 引用标签点击后查看原文片段
 - 对话历史保存
 - 低置信检索拒绝编造
@@ -26,14 +29,14 @@ Next.js 工作台
         | HTTP + SSE
         v
 FastAPI Agent 编排层
-  routers + parser + chunker + retrieval + planner + answer builder
+  routers + parser + chunker + hybrid retrieval + evidence + planner + controlled generation
         |
         v
 SQLite 元数据 + SQLite 向量检索兜底
   knowledge_bases / documents / document_chunks / conversations / messages / citations
 ```
 
-当前代码提供 SQLite 向量检索兜底，保证本地演示不依赖外部服务。`requirements.txt` 保留 ChromaDB 和 OpenAI 依赖，后续可把 `vector_store.py` 替换为 Chroma 集合。
+当前代码提供 SQLite 混合检索兜底，保证本地演示不依赖外部服务。未配置 `OPENAI_API_KEY` 时会使用规则生成；配置 OpenAI-compatible API 后，会在 Evidence 约束下生成更自然的答案。
 
 ## 快速开始
 
@@ -57,10 +60,19 @@ npm run dev
 
 打开 `http://localhost:3000/knowledge-bases`。
 
+可选 LLM 配置：
+
+```bash
+export OPENAI_API_KEY="你的 API Key"
+export OPENAI_MODEL="gpt-4o-mini"
+# 如使用兼容服务：
+export OPENAI_BASE_URL="https://your-compatible-endpoint/v1"
+```
+
 ## 演示路径
 
 1. 创建一个“售后政策库”。
-2. 上传 TXT、Markdown 或 CSV 文档。
+2. 上传 PDF、Word、TXT、Markdown 或 CSV 文档。
 3. 在工作台提问：“退款超过 7 天还能处理吗？”
 4. 查看右侧执行过程：问题识别、检索、生成、整理来源。
 5. 点击答案里的 `[[S1]]`，查看原文片段。
@@ -78,6 +90,8 @@ npm run dev
 - `POST /api/knowledge-bases/{id}/chat`
 - `GET /api/knowledge-bases/{id}/history`
 - `GET /api/conversations/{conversation_id}`
+- `DELETE /api/conversations/{conversation_id}`
+- `DELETE /api/knowledge-bases/{id}/history`
 
 文档上传为了减少本地依赖，使用原始文件流：
 
@@ -92,6 +106,7 @@ curl -X POST \
 
 - MVP 范围控制：先做稳定格式和可信闭环，Office、网页、混合检索放到 V1.1。
 - RAG 可信体验：回答必须带引用，点击可回到原文片段。
+- 后端质量闭环：混合检索、Evidence 筛选、受控生成、RAG eval 分层验证。
 - Agent 产品化：展示执行轨迹，但不暴露模型真实思维链。
 - 幻觉控制：低置信或无来源时拒答。
 - 可演进架构：SQLite 兜底适合演示，ChromaDB/OpenAI 可作为生产增强替换。
@@ -101,5 +116,6 @@ curl -X POST \
 ```bash
 cd /Users/litengteng/Github/knowledge-base-agent/backend
 python -m unittest discover -s tests -v
+python evals/run_rag_quality_eval.py
 python smoke_test.py
 ```

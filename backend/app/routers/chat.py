@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.database import get_db
 from app.services.agent_planner import plan_question
-from app.services.answer_builder import build_answer
-from app.services.retrieval_service import decide_retrieval
+from app.services.answer_builder import build_answer_from_evidence
+from app.services.evidence_service import select_evidence
+from app.services.llm_service import generate_llm_answer
+from app.services.retrieval_service import decide_evidence
 from app.services.vector_store import vector_store
 
 
@@ -54,8 +56,12 @@ def ask_question(
 
     plan = plan_question(payload.question)
     retrieved = vector_store.search(db, knowledge_base_id, payload.question)
-    decision = decide_retrieval(retrieved)
-    answer, citations = build_answer(payload.question, retrieved if decision.can_answer else [])
+    evidence = select_evidence(payload.question, retrieved)
+    decision = decide_evidence(evidence)
+    answer, citations = build_answer_from_evidence(payload.question, evidence if decision.can_answer else [])
+    llm_answer = generate_llm_answer(payload.question, evidence) if decision.can_answer else None
+    if llm_answer:
+        answer = llm_answer
 
     assistant_message = models.Message(
         conversation_id=conversation.id,
@@ -79,6 +85,7 @@ def ask_question(
                 chunk_id=citation["chunk_id"],
                 title=citation.get("document"),
                 snippet=citation["snippet"],
+                reason=citation.get("reason"),
                 score=citation["score"],
             )
         )
@@ -90,6 +97,7 @@ def ask_question(
             "retrieval",
             {
                 "hits": len(retrieved),
+                "evidence": len(evidence),
                 "top_score": retrieved[0].score if retrieved else 0,
                 "decision": decision.reason,
                 "confidence": decision.confidence_label,
